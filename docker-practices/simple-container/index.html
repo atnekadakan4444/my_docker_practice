@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UR Gacha Sequence</title>
+    <style>
+      :root {
+        --holo-grad: linear-gradient(
+          135deg,
+          #ff007f,
+          #7f00ff,
+          #00ffff,
+          #ffea00,
+          #ff007f
+        );
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: #050505;
+        color: #fff;
+        font-family: "Impact", "Arial Black", sans-serif;
+        overflow: hidden;
+        height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        perspective: 1200px; /* 3D空間の定義 */
+      }
+
+      /* 背景用Canvas */
+      #fx-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+        pointer-events: none;
+      }
+
+      /* UI・制御レイヤー */
+      #ui-layer {
+        position: absolute;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      /* ガチャを引くボタン */
+      #draw-btn {
+        padding: 20px 60px;
+        font-size: 28px;
+        font-weight: 900;
+        background: linear-gradient(180deg, #444, #111);
+        color: #00ffff;
+        border: 2px solid #00ffff;
+        border-radius: 8px;
+        cursor: pointer;
+        box-shadow:
+          0 0 15px rgba(0, 255, 255, 0.5),
+          inset 0 0 20px rgba(0, 255, 255, 0.2);
+        text-shadow: 0 0 10px #00ffff;
+        transition: all 0.2s ease;
+        text-transform: uppercase;
+        letter-spacing: 4px;
+      }
+      #draw-btn:active {
+        transform: scale(0.95);
+      }
+      #draw-btn.hidden {
+        display: none;
+      }
+
+      /* 3Dカードコンテナ */
+      #card-stage {
+        position: relative;
+        width: 300px;
+        height: 450px;
+        z-index: 5;
+        opacity: 0;
+        transform: translateY(-100px) rotateX(20deg);
+        transition:
+          transform 1.5s cubic-bezier(0.25, 1, 0.5, 1),
+          opacity 1s;
+        transform-style: preserve-3d;
+      }
+      #card-stage.summoned {
+        opacity: 1;
+        transform: translateY(0) rotateX(0deg);
+      }
+
+      /* カード本体 */
+      #card {
+        width: 100%;
+        height: 100%;
+        position: relative;
+        transform-style: preserve-3d;
+        transition: transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      }
+      #card.flip {
+        transform: rotateY(180deg);
+      }
+
+      /* カードの面（共通） */
+      .card-face {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        backface-visibility: hidden;
+        border-radius: 20px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        border: 4px solid #333;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+      }
+
+      /* 表面（未確定状態） */
+      .card-front {
+        background: radial-gradient(circle at center, #222, #000);
+        border-color: #555;
+      }
+      .card-front::after {
+        content: "?";
+        font-size: 100px;
+        color: #555;
+        text-shadow: 0 0 20px #000;
+      }
+
+      /* 裏面（UR確定状態） */
+      .card-back {
+        background: var(--holo-grad);
+        background-size: 300% 300%;
+        transform: rotateY(180deg);
+        border-color: #fff;
+        box-shadow:
+          0 0 50px #ff00ff,
+          inset 0 0 30px rgba(255, 255, 255, 0.8);
+        animation: holoFlow 3s ease infinite;
+      }
+      @keyframes holoFlow {
+        0% {
+          background-position: 0% 50%;
+        }
+        50% {
+          background-position: 100% 50%;
+        }
+        100% {
+          background-position: 0% 50%;
+        }
+      }
+      .card-back::before {
+        content: "UR";
+        font-size: 120px;
+        font-weight: 900;
+        color: #fff;
+        -webkit-text-stroke: 4px #ff00ff;
+        text-shadow:
+          0 0 30px #fff,
+          0 0 60px #ffea00;
+        font-style: italic;
+        transform: translateZ(50px); /* 3Dテキスト浮遊 */
+      }
+
+      /* 心音（鼓動）エフェクト */
+      .heartbeat {
+        animation: pulse 0.8s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0% {
+          transform: scale(1);
+          filter: brightness(1);
+        }
+        10% {
+          transform: scale(1.08);
+          filter: brightness(1.5);
+          box-shadow: 0 0 40px #f00;
+          border-color: #f00;
+        }
+        20% {
+          transform: scale(1);
+          filter: brightness(1);
+        }
+      }
+
+      /* 焦らし演出用ブラックアウトレイヤー */
+      #blackout {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        z-index: 999;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      /* ホワイトアウト（フラッシュ）レイヤー */
+      #whiteout {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #fff;
+        z-index: 1000;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.1s;
+      }
+
+      /* UR確定テキスト */
+      #result-text {
+        position: absolute;
+        top: 15%;
+        width: 100%;
+        text-align: center;
+        font-size: 80px;
+        letter-spacing: 10px;
+        z-index: 20;
+        opacity: 0;
+        background: linear-gradient(to bottom, #fff, #ffdf00, #ff00ff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        -webkit-text-stroke: 2px #fff;
+        filter: drop-shadow(0 0 20px #ff00ff) drop-shadow(0 0 40px #ffdf00);
+        transform: scale(3);
+      }
+      #result-text.show {
+        opacity: 1;
+        transform: scale(1);
+        transition:
+          transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+          opacity 0.3s;
+      }
+
+      /* 画面振動（インパクト用） */
+      @keyframes earthquake {
+        0% {
+          transform: translate(15px, 15px) rotate(1deg);
+        }
+        10% {
+          transform: translate(-15px, -15px) rotate(-1deg);
+        }
+        20% {
+          transform: translate(10px, -10px) rotate(2deg);
+        }
+        30% {
+          transform: translate(-10px, 10px) rotate(-2deg);
+        }
+        40% {
+          transform: translate(15px, -5px) rotate(1deg);
+        }
+        50% {
+          transform: translate(-15px, 5px) rotate(-1deg);
+        }
+        100% {
+          transform: translate(0, 0) rotate(0);
+        }
+      }
+      .shake {
+        animation: earthquake 0.5s;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="fx-canvas"></canvas>
+
+    <div id="blackout"></div>
+    <div id="whiteout"></div>
+
+    <div id="result-text">GOD TIER DRAW!!</div>
+
+    <div id="card-stage">
+      <div id="card">
+        <div class="card-face card-front"></div>
+        <div class="card-face card-back"></div>
+      </div>
+    </div>
+
+    <div id="ui-layer">
+      <button id="draw-btn">SUMMON PUSH</button>
+    </div>
+
+    <script>
+      /**
+       * 状態管理およびエフェクト制御ロジック
+       */
+      const canvas = document.getElementById("fx-canvas");
+      const ctx = canvas.getContext("2d");
+      const drawBtn = document.getElementById("draw-btn");
+      const cardStage = document.getElementById("card-stage");
+      const card = document.getElementById("card");
+      const blackout = document.getElementById("blackout");
+      const whiteout = document.getElementById("whiteout");
+      const resultText = document.getElementById("result-text");
+      const cardFront = document.querySelector(".card-front");
+
+      let W, H;
+      let particles = [];
+      let animationFrameId;
+      let effectPhase = 0; // 0:idle, 1:charge, 2:burst
+
+      function resize() {
+        W = canvas.width = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+      }
+      window.addEventListener("resize", resize);
+      resize();
+
+      // ユーティリティ: 指定ミリ秒待機する非同期関数
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      class Particle {
+        constructor(x, y, isBurst = false) {
+          this.x = x;
+          this.y = y;
+          this.isBurst = isBurst;
+          this.angle = Math.random() * Math.PI * 2;
+          // Chargeフェーズは中心へ向かい、Burstフェーズは外へ弾ける
+          this.speed = isBurst
+            ? Math.random() * 20 + 10
+            : Math.random() * 5 + 2;
+          this.size = Math.random() * 4 + 2;
+          this.life = 1;
+          this.decay = isBurst ? 0.015 : 0.02;
+          this.hue = isBurst ? Math.random() * 360 : 200; // 青系からレインボーへ
+        }
+        update() {
+          if (this.isBurst) {
+            this.x += Math.cos(this.angle) * this.speed;
+            this.y += Math.sin(this.angle) * this.speed;
+            this.speed *= 0.95; // 摩擦
+          } else {
+            // 中心（カード位置）に吸い込まれる挙動
+            const cx = W / 2;
+            const cy = H / 2;
+            const dx = cx - this.x;
+            const dy = cy - this.y;
+            this.x += dx * 0.05;
+            this.y += dy * 0.05;
+          }
+          this.life -= this.decay;
+        }
+        draw() {
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, this.life);
+          ctx.fillStyle = `hsl(${this.hue}, 100%, 60%)`;
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = ctx.fillStyle;
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      function renderCanvas() {
+        ctx.clearRect(0, 0, W, H);
+
+        // エフェクト生成ロジック
+        if (effectPhase === 1) {
+          // 溜めエフェクト: 画面外周からパーティクル発生
+          if (Math.random() > 0.5) {
+            const r = Math.max(W, H);
+            const angle = Math.random() * Math.PI * 2;
+            particles.push(
+              new Particle(
+                W / 2 + Math.cos(angle) * r,
+                H / 2 + Math.sin(angle) * r,
+                false,
+              ),
+            );
+          }
+        }
+
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.update();
+          p.draw();
+          if (p.life <= 0) particles.splice(i, 1);
+        }
+        animationFrameId = requestAnimationFrame(renderCanvas);
+      }
+
+      // 演出シーケンス制御
+      async function executeSequence() {
+        // 1. 初期化・カード降臨
+        drawBtn.classList.add("hidden");
+        cardStage.classList.add("summoned");
+        effectPhase = 1; // 溜め開始
+
+        await sleep(1500);
+
+        // 2. 焦らし演出（心音）
+        cardFront.classList.add("heartbeat");
+
+        // 擬似的なレア度昇格演出（青→黄→赤）
+        await sleep(1000);
+        cardFront.style.boxShadow = "0 0 30px #ffea00";
+        cardFront.style.borderColor = "#ffea00";
+
+        await sleep(1000);
+        cardFront.style.boxShadow = "0 0 50px #ff0000";
+        cardFront.style.borderColor = "#ff0000";
+        cardFront.style.animationDuration = "0.4s"; // 心音加速
+
+        await sleep(1200);
+
+        // 3. フリーズ（ブラックアウト）
+        // 音楽・エフェクトが停止し、無音の暗闇になる「プチュン」演出
+        effectPhase = 0;
+        particles = []; // 画面上のエフェクト強制消去
+        ctx.clearRect(0, 0, W, H);
+        blackout.style.opacity = "1";
+        cardFront.classList.remove("heartbeat");
+
+        // 究極の焦らし時間（1.5秒の沈黙）
+        await sleep(1500);
+
+        // 4. 覚醒・当たり確定（ホワイトアウトからの強烈な情報量）
+        blackout.style.opacity = "0";
+        whiteout.style.opacity = "1";
+        document.body.classList.add("shake");
+
+        // フラッシュ中にカードを裏返す
+        card.classList.add("flip");
+        resultText.classList.add("show");
+
+        setTimeout(() => {
+          whiteout.style.opacity = "0";
+        }, 150);
+
+        // 5. 確定後のパーティクル大爆発
+        effectPhase = 2;
+        for (let i = 0; i < 200; i++) {
+          particles.push(new Particle(W / 2, H / 2, true));
+        }
+
+        // 継続的な光の粒
+        const burstInterval = setInterval(() => {
+          for (let i = 0; i < 10; i++) {
+            particles.push(new Particle(W / 2, H / 2, true));
+          }
+        }, 100);
+
+        // 揺れを収める
+        await sleep(500);
+        document.body.classList.remove("shake");
+      }
+
+      drawBtn.addEventListener("click", executeSequence);
+      renderCanvas();
+    </script>
+  </body>
+</html>
